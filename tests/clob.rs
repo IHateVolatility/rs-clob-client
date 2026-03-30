@@ -1549,6 +1549,9 @@ mod authenticated {
                 )?,
                 true,
             ))
+            .order_id(U256::from_str(
+                "0x23b457271bce9fa09b4f79125c9ec09e968235a462de82e318ef4eb6fe0ffeb0",
+            )?)
             .build();
 
         assert_eq!(signed_order.order.taker, taker);
