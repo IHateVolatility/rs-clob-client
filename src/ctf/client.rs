@@ -31,7 +31,7 @@
     reason = "Alloy sol! macro generates code that triggers these lints"
 )]
 
-use alloy::primitives::ChainId;
+use alloy::primitives::{ChainId, U256};
 use alloy::providers::Provider;
 use alloy::sol;
 
@@ -112,6 +112,12 @@ sol! {
             bytes32 conditionId,
             uint256[] calldata indexSets
         ) external;
+
+        /// Returns the ERC1155 balance for a token ID and account.
+        function balanceOf(address account, uint256 id) external view returns (uint256);
+
+        /// Returns condition payout denominator (0 until resolved).
+        function payoutDenominator(bytes32 conditionId) external view returns (uint256);
     }
 
     #[sol(rpc)]
@@ -281,6 +287,123 @@ impl<P: Provider + Clone> Client<P> {
             .map_err(|e| CtfError::ContractCall(format!("Failed to get position ID: {e}")))?;
 
         Ok(PositionIdResponse { position_id })
+    }
+
+    /// Returns on-chain ERC1155 balances for YES and NO binary positions.
+    ///
+    /// This computes position IDs for index sets 1 (YES) and 2 (NO), then reads
+    /// `balanceOf(account, id)` on the CTF contract for both IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any contract call fails.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(level = "debug", skip(self), fields(
+            collateral_token = %collateral_token,
+            condition_id = %condition_id,
+            account = %account
+        ))
+    )]
+    pub async fn binary_position_balances(
+        &self,
+        collateral_token: crate::types::Address,
+        condition_id: crate::types::B256,
+        account: crate::types::Address,
+    ) -> Result<(U256, U256)> {
+        let yes_collection_id = self
+            .contract
+            .getCollectionId(U256::ZERO.into(), condition_id, U256::from(1_u8))
+            .call()
+            .await
+            .map_err(|e| {
+                CtfError::ContractCall(format!(
+                    "Failed to get YES collection ID for condition {condition_id}: {e}"
+                ))
+            })?;
+
+        let no_collection_id = self
+            .contract
+            .getCollectionId(U256::ZERO.into(), condition_id, U256::from(2_u8))
+            .call()
+            .await
+            .map_err(|e| {
+                CtfError::ContractCall(format!(
+                    "Failed to get NO collection ID for condition {condition_id}: {e}"
+                ))
+            })?;
+
+        let yes_position_id = self
+            .contract
+            .getPositionId(collateral_token, yes_collection_id)
+            .call()
+            .await
+            .map_err(|e| {
+                CtfError::ContractCall(format!(
+                    "Failed to get YES position ID for condition {condition_id}: {e}"
+                ))
+            })?;
+
+        let no_position_id = self
+            .contract
+            .getPositionId(collateral_token, no_collection_id)
+            .call()
+            .await
+            .map_err(|e| {
+                CtfError::ContractCall(format!(
+                    "Failed to get NO position ID for condition {condition_id}: {e}"
+                ))
+            })?;
+
+        let yes_balance = self
+            .contract
+            .balanceOf(account, yes_position_id)
+            .call()
+            .await
+            .map_err(|e| {
+                CtfError::ContractCall(format!(
+                    "Failed to get YES on-chain balance for condition {condition_id}: {e}"
+                ))
+            })?;
+
+        let no_balance = self
+            .contract
+            .balanceOf(account, no_position_id)
+            .call()
+            .await
+            .map_err(|e| {
+                CtfError::ContractCall(format!(
+                    "Failed to get NO on-chain balance for condition {condition_id}: {e}"
+                ))
+            })?;
+
+        Ok((yes_balance, no_balance))
+    }
+
+    /// Returns whether a condition has been resolved on-chain.
+    ///
+    /// In CTF, unresolved conditions have `payoutDenominator == 0`.
+    /// Once resolved, `payoutDenominator > 0`.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(level = "debug", skip(self), fields(condition_id = %condition_id))
+    )]
+    pub async fn is_condition_resolved(
+        &self,
+        condition_id: crate::types::B256,
+    ) -> Result<bool> {
+        let denominator = self
+            .contract
+            .payoutDenominator(condition_id)
+            .call()
+            .await
+            .map_err(|e| {
+                CtfError::ContractCall(format!(
+                    "Failed to get payout denominator for condition {condition_id}: {e}"
+                ))
+            })?;
+
+        Ok(!denominator.is_zero())
     }
 
     /// Splits collateral into outcome tokens.

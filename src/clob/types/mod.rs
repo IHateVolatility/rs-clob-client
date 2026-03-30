@@ -481,6 +481,33 @@ pub struct SignedOrder {
     pub order_type: OrderType,
     pub owner: ApiKey,
     pub post_only: Option<bool>,
+    pub order_id: U256,
+}
+impl SignedOrder{
+    pub fn to_request(self) -> SignedOrderRequest {
+        SignedOrderRequest {
+            order: self.order,
+            signature: self.signature,
+            order_type: self.order_type,
+            owner: self.owner,
+            post_only: self.post_only,
+        }
+    }
+}
+#[non_exhaustive]
+#[derive(Debug, Serialize)]
+pub struct SignedOrderRequest {
+    pub order: Order,
+    pub signature: Signature,
+    pub order_type: OrderType,
+    pub owner: ApiKey,
+    pub post_only: Option<bool>
+}
+
+impl From<SignedOrder> for SignedOrderRequest {
+    fn from(signed_order: SignedOrder) -> Self {
+        signed_order.to_request()
+    }
 }
 
 /// Helper struct for serializing Order with signature injected.
@@ -716,6 +743,7 @@ mod tests {
             order_type: OrderType::GTC,
             owner: ApiKey::nil(),
             post_only: None,
+            order_id: U256::ZERO,
         };
 
         let value = to_value(&signed_order).expect("serialize SignedOrder");

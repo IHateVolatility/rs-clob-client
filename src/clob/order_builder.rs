@@ -50,6 +50,8 @@ pub struct OrderBuilder<OrderKind, K: AuthKind> {
     pub(crate) order_type: Option<OrderType>,
     pub(crate) post_only: Option<bool>,
     pub(crate) funder: Option<Address>,
+    pub(crate) fee_rate_bps: Option<u32>,
+    pub(crate) minimum_tick_size: Option<Decimal>,
     pub(crate) _kind: PhantomData<OrderKind>,
 }
 
@@ -99,6 +101,16 @@ impl<OrderKind, K: AuthKind> OrderBuilder<OrderKind, K> {
         self.post_only = Some(post_only);
         self
     }
+
+    pub fn fee_rate_bps(mut self, fee_rate_bps: u32) -> Self {
+        self.fee_rate_bps = Some(fee_rate_bps);
+        self
+    }
+
+    pub fn minimum_tick_size(mut self, minimum_tick_size: Decimal) -> Self {
+        self.minimum_tick_size = Some(minimum_tick_size);
+        self
+    }
 }
 
 impl<K: AuthKind> OrderBuilder<Limit, K> {
@@ -146,13 +158,29 @@ impl<K: AuthKind> OrderBuilder<Limit, K> {
             )));
         }
 
-        let fee_rate = self.client.fee_rate_bps(token_id).await?;
-        let minimum_tick_size = self
-            .client
-            .tick_size(token_id)
-            .await?
-            .minimum_tick_size
-            .as_decimal();
+        // let fee_rate = self.client.fee_rate_bps(token_id).await?;
+        let fee_rate = if let Some(fee_rate_bps) = self.fee_rate_bps {
+            fee_rate_bps
+        } else {
+            self.client.fee_rate_bps(token_id).await?.base_fee
+        };
+        // warn!(token_id = %token_id, fee_rate_bps = fee_rate, "Using fee rate for order builder. This may be stale if the fee rate has recently changed. Consider setting the fee rate directly on the builder with `fee_rate_bps`.");
+
+        // let minimum_tick_size = self
+        //     .client
+        //     .tick_size(token_id)
+        //     .await?
+        //     .minimum_tick_size
+        //     .as_decimal();
+        let minimum_tick_size = if let Some(minimum_tick_size) = self.minimum_tick_size {
+            minimum_tick_size
+        } else {
+            self.client
+                .tick_size(token_id)
+                .await?
+                .minimum_tick_size
+                .as_decimal()
+        };
 
         let decimals = minimum_tick_size.scale();
 
@@ -239,7 +267,7 @@ impl<K: AuthKind> OrderBuilder<Limit, K> {
             makerAmount: U256::from(to_fixed_u128(maker_amount)),
             takerAmount: U256::from(to_fixed_u128(taker_amount)),
             side: side as u8,
-            feeRateBps: U256::from(fee_rate.base_fee),
+            feeRateBps: U256::from(fee_rate),
             nonce: U256::from(nonce),
             signer: self.signer,
             expiration: U256::from(expiration.timestamp().to_u64().ok_or(Error::validation(

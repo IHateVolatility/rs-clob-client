@@ -52,7 +52,7 @@ use crate::clob::types::{
     CreateRfqRequestRequest, CreateRfqRequestResponse, RfqQuote, RfqQuotesRequest, RfqRequest,
     RfqRequestsRequest,
 };
-use crate::clob::types::{SignableOrder, SignatureType, SignedOrder, TickSize};
+use crate::clob::types::{SignableOrder, SignatureType, SignedOrder, SignedOrderRequest, TickSize};
 use crate::error::{Error, Kind as ErrorKind, Synchronization};
 use crate::types::Address;
 use crate::{
@@ -1458,9 +1458,12 @@ impl<K: Kind> Client<Authenticated<K>> {
             ..Eip712Domain::default()
         };
 
+        let hash = order.eip712_signing_hash(&domain);
         let signature = signer
-            .sign_hash(&order.eip712_signing_hash(&domain))
+            .sign_hash(&hash)
             .await?;
+        // Keccak-256
+        let hash: U256 = hash.into();
 
         Ok(SignedOrder {
             order,
@@ -1468,8 +1471,10 @@ impl<K: Kind> Client<Authenticated<K>> {
             order_type,
             owner: self.state().credentials.key,
             post_only,
+            order_id: hash
         })
     }
+
 
     /// Posts a signed order to the orderbook.
     ///
@@ -2125,6 +2130,8 @@ impl<K: Kind> Client<Authenticated<K>> {
             taker: None,
             order_type: None,
             post_only: Some(false),
+            fee_rate_bps: None,
+            minimum_tick_size: None,
             client: Client {
                 inner: Arc::clone(&self.inner),
                 #[cfg(feature = "heartbeats")]
